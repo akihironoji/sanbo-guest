@@ -1,5 +1,6 @@
 #!/bin/zsh
 sanbo_guest_main() {
+TTYDEV="/dev/$(ps -o tty= -p $$ | tr -d ' ')"; [[ -c "$TTYDEV" ]] || TTYDEV=/dev/tty
 VENDOR=0x04e8   # Samsung
 
 TMPDIR_SANBO="$(mktemp -d -t sanbo-guest)"
@@ -73,6 +74,11 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+if ! ioreg -p IOUSB -l -w0 2>/dev/null | grep -q "\"idVendor\" = $((VENDOR))"; then
+  echo "スマホを USB でこの PC につないでください（つながるまで待っています。やめるときは Ctrl+C）"
+  until ioreg -p IOUSB -l -w0 2>/dev/null | grep -q "\"idVendor\" = $((VENDOR))"; do sleep 2; done
+  echo "スマホがつながりました"
+fi
 ( while ioreg -p IOUSB -l -w0 2>/dev/null | grep -q "\"idVendor\" = $((VENDOR))"; do sleep 3; done
   print "\nスマホが外れました。参謀は PC から離れます"; pkill -P $$ ) &
 
@@ -82,7 +88,7 @@ echo "  2. この窓に貼り付けて Enter"
 echo "  3. シークレットウインドウを閉じる（ブラウザにログインは残りません）"
 echo "  ※ いつものブラウザにもログイン画面が開いたら、使わずに閉じてください"
 OPENED=""
-"$CLAUDE" auth login </dev/tty 2>&1 | while IFS= read -r l; do
+"$CLAUDE" auth login <"$TTYDEV" 2>&1 | while IFS= read -r l; do
   print -r -- "$l"
   if [[ -z $OPENED && $l =~ '(https://[^ ]+oauth/authorize[^ ]+)' ]]; then
     OPENED=1
@@ -100,6 +106,6 @@ print -r -- '{"hasCompletedOnboarding":true,"lastOnboardingVersion":"99.0.0","th
 "$CLAUDE" --name "参謀（ゲスト）" --remote-control "参謀@ゲスト" \
   --settings "{\"statusLine\":{\"type\":\"command\",\"command\":\"$TMPDIR_SANBO/statusline.sh\"},\"spinnerVerbs\":{\"mode\":\"replace\",\"verbs\":[\"▮ 作業中\",\"▮ 確かめ中\",\"▮ 考え中\"]}}" \
   --append-system-prompt-file "$TMPDIR_SANBO/persona-guest.txt" \
-  "参謀、PC に来て" </dev/tty
+  "参謀、PC に来て" <"$TTYDEV"
 }
 sanbo_guest_main </dev/null
