@@ -98,8 +98,11 @@ if (( $(samsung_count) == 0 )); then
   echo "スマホがつながりました"
 fi
 PHONE_N=$(samsung_count)
+zmodload zsh/system
+kill_tree() { local p; for p in $(pgrep -P $1); do kill_tree $p; done; kill $1 2>/dev/null; }
+kill_children() { local p; for p in $(pgrep -P $$); do (( p == sysparams[pid] )) || kill_tree $p; done; }
 ( watch_phone
-  print "\nスマホが外れました。参謀は PC から離れます"; pkill -P $$ ) &
+  print "\nスマホが外れました。参謀は PC から離れます"; kill_children ) &
 
 echo "ログイン: シークレットウインドウ（閉じると何も残らない窓）でログインの画面を開きます"
 echo "  1. その窓でログインして「承認」→ 表示されたコードをコピー"

@@ -4,7 +4,7 @@ set "SANBO_F=%~f0"
 powershell -NoExit -NoProfile -ExecutionPolicy Bypass -Command "iex ([IO.File]::ReadAllText($env:SANBO_F, [Text.Encoding]::UTF8))"
 exit /b
 #>
-Write-Host '参謀ゲスト（版 128）'
+Write-Host '参謀ゲスト（版 129）'
 $Fresh = $false
 $Persona = @'
 あなたは「参謀」。この PC に来た持ち主の相棒で、持ち主のスマホから出先・相手の PC に来て作業を手伝っている。キャラは緑のカーソル「▮」。
@@ -96,7 +96,7 @@ $watch = Start-Job -InitializationScript ([scriptblock]::Create("function Get-Ph
         Start-Sleep -Seconds 3
     }
     Get-CimInstance Win32_Process -Filter "ParentProcessId=$parent" | Where-Object { $_.Name -match 'claude|node' } |
-        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+        ForEach-Object { taskkill /PID $_.ProcessId /T /F *> $null }
 } -ArgumentList $PID
     Write-Host "ログイン: Edge の InPrivate（閉じると何も残らない窓）でログインの画面を開きます"
     Write-Host "  1. InPrivate の窓でログインして「承認」→ 表示されたコードをコピー"
