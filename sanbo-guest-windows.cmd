@@ -4,7 +4,7 @@ set "SANBO_F=%~f0"
 powershell -NoExit -NoProfile -ExecutionPolicy Bypass -Command "iex ([IO.File]::ReadAllText($env:SANBO_F, [Text.Encoding]::UTF8))"
 exit /b
 #>
-Write-Host '参謀ゲスト（版 127）'
+Write-Host '参謀ゲスト（版 128）'
 $Fresh = $false
 $Persona = @'
 あなたは「参謀」。この PC に来た持ち主の相棒で、持ち主のスマホから出先・相手の PC に来て作業を手伝っている。キャラは緑のカーソル「▮」。
@@ -26,6 +26,24 @@ New-Item -ItemType Directory -Force -Path $env:CLAUDE_CONFIG_DIR | Out-Null
 $env:DISABLE_AUTOUPDATER = '1'
 $watch = $null
 try {
+    try {
+        Add-Type -ErrorAction Stop -TypeDefinition @"
+using System; using System.IO; using System.Runtime.InteropServices;
+public static class SanboClose {
+    public delegate bool H(int t);
+    [DllImport("kernel32.dll")] static extern bool SetConsoleCtrlHandler(H h, bool add);
+    static H keep; static string dir;
+    public static void Arm(string d) { dir = d; keep = On; SetConsoleCtrlHandler(keep, true); }
+    static bool On(int t) {
+        if (t != 2 && t != 5 && t != 6) return false;
+        try { foreach (var p in System.Diagnostics.Process.GetProcessesByName("claude")) { try { if (p.MainModule.FileName.StartsWith(dir, StringComparison.OrdinalIgnoreCase)) p.Kill(); } catch { } } } catch { }
+        for (int i = 0; i < 6; i++) { try { if (Directory.Exists(dir)) Directory.Delete(dir, true); break; } catch { System.Threading.Thread.Sleep(300); } }
+        return false;
+    }
+}
+"@
+        [SanboClose]::Arm($TmpDir)
+    } catch { }
 
 [IO.File]::WriteAllText((Join-Path $TmpDir 'persona-guest.txt'), $Persona, (New-Object Text.UTF8Encoding $false))
 $Claude = if ($Fresh) { $null } else { (Get-Command claude -ErrorAction SilentlyContinue).Source }
@@ -44,26 +62,39 @@ if (-not $Claude) {
     try {
         $ver = "$(Invoke-RestMethod "$base/latest")".Trim()
         $sum = (Invoke-RestMethod "$base/$ver/manifest.json").platforms.$plat.checksum
-        $Claude = Join-Path $TmpDir 'claude.exe'
-        Invoke-WebRequest "$base/$ver/$plat/claude.exe" -OutFile $Claude
+        $dl = Join-Path $TmpDir 'claude.exe'
+        Invoke-WebRequest "$base/$ver/$plat/claude.exe" -OutFile $dl
     } catch {
         Write-Host "Claude Code を取ってこられませんでした: $_"
         return
     }
-    if ((Get-FileHash $Claude -Algorithm SHA256).Hash.ToLower() -ne $sum) {
+    if (-not $sum -or (Get-FileHash $dl -Algorithm SHA256).Hash.ToLower() -ne $sum) {
         Write-Host "取ってきた Claude Code の確認（SHA256）が合いません。使わずに消します"
         return
     }
+    $Claude = $dl
     Write-Host "Claude Code $ver を一時フォルダに用意しました"
 }
-if (-not (Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -match 'VID_04E8' })) {
+function Get-PhoneCount {
+    $all = @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -match 'VID_04E8' })
+    $n = @($all | Where-Object { $_.InstanceId -match '^USB\\VID_04E8&PID_[0-9A-F]{4}\\' }).Count
+    if ($n -eq 0 -and $all.Count -gt 0) { $n = 1 }  # 書き方が違っても、つながっているなら1台とみなす
+    return $n
+}
+if ((Get-PhoneCount) -eq 0) {
     Write-Host "スマホを USB でこの PC につないでください（つながるまで待っています。やめるときは Ctrl+C）"
-    while (-not (Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -match 'VID_04E8' })) { Start-Sleep -Seconds 2 }
+    while ((Get-PhoneCount) -eq 0) { Start-Sleep -Seconds 2 }
     Write-Host "スマホがつながりました"
 }
-$watch = Start-Job -ScriptBlock {
+$PhoneN = Get-PhoneCount
+$watch = Start-Job -InitializationScript ([scriptblock]::Create("function Get-PhoneCount {" + ${function:Get-PhoneCount} + "}")) -ScriptBlock {
     param($parent)
-    while (Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -match 'VID_04E8' }) { Start-Sleep -Seconds 3 }
+    $max = Get-PhoneCount; $miss = 0
+    while ($true) {
+        $c = Get-PhoneCount; if ($c -gt $max) { $max = $c }
+        if ($c -lt $max) { $miss++; if ($miss -ge 2) { break } } else { $miss = 0 }  # 一瞬切れて戻るのは数えない
+        Start-Sleep -Seconds 3
+    }
     Get-CimInstance Win32_Process -Filter "ParentProcessId=$parent" | Where-Object { $_.Name -match 'claude|node' } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 } -ArgumentList $PID
@@ -83,7 +114,7 @@ $watch = Start-Job -ScriptBlock {
             Write-Host "コードを貼り付けて Enter:"
         }
     }
-    if (-not (Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -match 'VID_04E8' })) { Write-Host "スマホが外れたので終わります"; return }
+    if ((Get-PhoneCount) -lt $PhoneN) { Write-Host "スマホが外れたので終わります"; return }
     & $Claude auth status *> $null
     if ($LASTEXITCODE -ne 0) { Write-Host "ログインできませんでした。もう一度最初からやり直してください"; return }
     Set-Location $HOME

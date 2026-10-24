@@ -83,12 +83,22 @@ cleanup() {
 trap cleanup EXIT
 trap 'cleanup; exit 130' INT TERM HUP
 
-if ! ioreg -p IOUSB -l -w0 2>/dev/null | grep -qE "\"idVendor\" = $((VENDOR))\$"; then
+samsung_count() { ioreg -p IOUSB -l -w0 2>/dev/null | grep -cE "\"idVendor\" = $((VENDOR))\$"; }
+watch_phone() {
+  local max=$(samsung_count) miss=0 c
+  while true; do
+    c=$(samsung_count); (( c > max )) && max=$c
+    if (( c < max )); then (( ++miss >= 2 )) && return; else miss=0; fi
+    sleep 3
+  done
+}
+if (( $(samsung_count) == 0 )); then
   echo "スマホを USB でこの PC につないでください（つながるまで待っています。やめるときは Ctrl+C）"
-  until ioreg -p IOUSB -l -w0 2>/dev/null | grep -qE "\"idVendor\" = $((VENDOR))\$"; do sleep 2; done
+  until (( $(samsung_count) > 0 )); do sleep 2; done
   echo "スマホがつながりました"
 fi
-( while ioreg -p IOUSB -l -w0 2>/dev/null | grep -qE "\"idVendor\" = $((VENDOR))\$"; do sleep 3; done
+PHONE_N=$(samsung_count)
+( watch_phone
   print "\nスマホが外れました。参謀は PC から離れます"; pkill -P $$ ) &
 
 echo "ログイン: シークレットウインドウ（閉じると何も残らない窓）でログインの画面を開きます"
@@ -109,12 +119,12 @@ BROWSER=/usr/bin/true "$CLAUDE" auth login <"$TTYDEV" 2>&1 | while IFS= read -r 
     echo "コードを貼り付けて Enter:"
   fi
 done
-ioreg -p IOUSB -l -w0 2>/dev/null | grep -qE "\"idVendor\" = $((VENDOR))\$" || { echo "スマホが外れたので終わります"; exit 0; }
+(( $(samsung_count) >= PHONE_N )) || { echo "スマホが外れたので終わります"; exit 0; }
 "$CLAUDE" auth status >/dev/null 2>&1 || { echo "ログインできませんでした。もう一度最初からやり直してください"; exit 1; }
 NEW=$(comm -13 <(print -r -- "$KC_BEFORE") <(kc_list))
 if [[ -z "$NEW" ]]; then
-  echo "!!! この回のログインの鍵が、この Mac の Claude Code の鍵と区別できません。安全のため参謀を起動せずに終わります"
-  echo "!!! この Mac で Claude Code を使っている人は、あとで claude を開いて /login し直してください"
+  echo "!!! この回のログインの鍵が、キーチェーンの中で見分けられません（キーチェーンがロックされている・鍵の名前が想定と違う）。安全のため参謀を起動せずに終わります"
+  echo "!!! この Mac で Claude Code を使っている人が、この後ログインし直しを求められたら /login してください"
   exit 1
 fi
 print -r -- "$NEW" > "$MARK"  # この回の鍵の名前（片付けが走らなかったときの、次の回の後始末用）
