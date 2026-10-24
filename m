@@ -81,7 +81,7 @@ echo "  2. この窓に貼り付けて Enter"
 echo "  3. シークレットウインドウを閉じる（ブラウザにログインは残りません）"
 echo "  ※ いつものブラウザにもログイン画面が開いたら、使わずに閉じてください"
 OPENED=""
-"$CLAUDE" auth login 2>&1 | while IFS= read -r l; do
+"$CLAUDE" auth login </dev/tty 2>&1 | while IFS= read -r l; do
   print -r -- "$l"
   if [[ -z $OPENED && $l =~ '(https://[^ ]+oauth/authorize[^ ]+)' ]]; then
     OPENED=1
@@ -99,4 +99,4 @@ print -r -- '{"hasCompletedOnboarding":true,"lastOnboardingVersion":"99.0.0","th
 "$CLAUDE" --name "参謀（ゲスト）" --remote-control "参謀@ゲスト" \
   --settings "{\"statusLine\":{\"type\":\"command\",\"command\":\"$TMPDIR_SANBO/statusline.sh\"},\"spinnerVerbs\":{\"mode\":\"replace\",\"verbs\":[\"▮ 作業中\",\"▮ 確かめ中\",\"▮ 考え中\"]}}" \
   --append-system-prompt-file "$TMPDIR_SANBO/persona-guest.txt" \
-  "参謀、PC に来て"
+  "参謀、PC に来て" </dev/tty
