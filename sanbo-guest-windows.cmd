@@ -1,9 +1,10 @@
 <# : sanbo guest (Windows, one file)
 @echo off
-powershell -NoExit -NoProfile -ExecutionPolicy Bypass -Command "iex ([IO.File]::ReadAllText('%~f0', [Text.Encoding]::UTF8))"
+set "SANBO_F=%~f0"
+powershell -NoExit -NoProfile -ExecutionPolicy Bypass -Command "iex ([IO.File]::ReadAllText($env:SANBO_F, [Text.Encoding]::UTF8))"
 exit /b
 #>
-Write-Host '参謀ゲスト（版 120）'
+Write-Host '参謀ゲスト（版 127）'
 $Fresh = $false
 $Persona = @'
 あなたは「参謀」。この PC に来た持ち主の相棒で、持ち主のスマホから出先・相手の PC に来て作業を手伝っている。キャラは緑のカーソル「▮」。
@@ -22,6 +23,9 @@ Get-ChildItem -Path $env:TEMP -Directory -Filter 'sanbo-guest-*' -ErrorAction Si
 $TmpDir = Join-Path $env:TEMP ("sanbo-guest-" + [guid]::NewGuid().ToString('N'))
 $env:CLAUDE_CONFIG_DIR = Join-Path $TmpDir 'claude-config'
 New-Item -ItemType Directory -Force -Path $env:CLAUDE_CONFIG_DIR | Out-Null
+$env:DISABLE_AUTOUPDATER = '1'
+$watch = $null
+try {
 
 [IO.File]::WriteAllText((Join-Path $TmpDir 'persona-guest.txt'), $Persona, (New-Object Text.UTF8Encoding $false))
 $Claude = if ($Fresh) { $null } else { (Get-Command claude -ErrorAction SilentlyContinue).Source }
@@ -44,15 +48,18 @@ if (-not $Claude) {
         Invoke-WebRequest "$base/$ver/$plat/claude.exe" -OutFile $Claude
     } catch {
         Write-Host "Claude Code を取ってこられませんでした: $_"
-        Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue
-        exit 1
+        return
     }
     if ((Get-FileHash $Claude -Algorithm SHA256).Hash.ToLower() -ne $sum) {
         Write-Host "取ってきた Claude Code の確認（SHA256）が合いません。使わずに消します"
-        Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue
-        exit 1
+        return
     }
     Write-Host "Claude Code $ver を一時フォルダに用意しました"
+}
+if (-not (Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -match 'VID_04E8' })) {
+    Write-Host "スマホを USB でこの PC につないでください（つながるまで待っています。やめるときは Ctrl+C）"
+    while (-not (Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -match 'VID_04E8' })) { Start-Sleep -Seconds 2 }
+    Write-Host "スマホがつながりました"
 }
 $watch = Start-Job -ScriptBlock {
     param($parent)
@@ -60,7 +67,6 @@ $watch = Start-Job -ScriptBlock {
     Get-CimInstance Win32_Process -Filter "ParentProcessId=$parent" | Where-Object { $_.Name -match 'claude|node' } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 } -ArgumentList $PID
-try {
     Write-Host "ログイン: Edge の InPrivate（閉じると何も残らない窓）でログインの画面を開きます"
     Write-Host "  1. InPrivate の窓でログインして「承認」→ 表示されたコードをコピー"
     Write-Host "  2. この窓に貼り付けて Enter"
@@ -72,11 +78,14 @@ try {
         Write-Host $l
         if (-not $script:opened -and $l -match '(https://\S+oauth/authorize\S+)') {
             $script:opened = $true
-            try { Start-Process 'msedge.exe' -ArgumentList '--inprivate', $matches[1] }
+            try { Start-Process 'msedge.exe' -ArgumentList '--inprivate', $matches[1] -ErrorAction Stop }
             catch { Write-Host "Edge を開けませんでした。上の URL をブラウザのシークレット（プライベート）ウィンドウに貼ってください" }
             Write-Host "コードを貼り付けて Enter:"
         }
     }
+    if (-not (Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -match 'VID_04E8' })) { Write-Host "スマホが外れたので終わります"; return }
+    & $Claude auth status *> $null
+    if ($LASTEXITCODE -ne 0) { Write-Host "ログインできませんでした。もう一度最初からやり直してください"; return }
     Set-Location $HOME
 $settings = Join-Path $TmpDir 'sanbo-settings.json'
 [IO.File]::WriteAllText($settings, '{"spinnerVerbs":{"mode":"replace","verbs":["▮ 作業中","▮ 確かめ中","▮ 考え中"]}}', (New-Object Text.UTF8Encoding $false))
@@ -87,7 +96,7 @@ $settings = Join-Path $TmpDir 'sanbo-settings.json'
 } finally {
     $E = [char]27
     [Console]::Write("$E[?1000l$E[?1002l$E[?1003l$E[?1006l$E[?1015l$E[?2004l$E[?1004l$E[?1049l$E[?25h$E[0m")
-    Stop-Job $watch -ErrorAction SilentlyContinue; Remove-Job $watch -Force -ErrorAction SilentlyContinue
+    if ($watch) { Stop-Job $watch -ErrorAction SilentlyContinue; Remove-Job $watch -Force -ErrorAction SilentlyContinue }
     Write-Host ""
     Write-Host "片付け中: この PC に置いた一時ファイルを削除します"
     if ($Claude) { & $Claude auth logout *> $null; Write-Host "ログアウトしました" }

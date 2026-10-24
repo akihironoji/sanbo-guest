@@ -3,8 +3,9 @@ sanbo_guest_main() {
 TTYDEV="/dev/$(ps -o tty= -p $$ | tr -d ' ')"; [[ -c "$TTYDEV" ]] || TTYDEV=/dev/tty
 VENDOR=0x04e8   # Samsung
 
-TMPDIR_SANBO="$(mktemp -d -t sanbo-guest)"
+TMPDIR_SANBO="$(mktemp -d -t sanbo-guest)" && [[ -d "$TMPDIR_SANBO" ]] || { echo "一時フォルダを作れませんでした"; return 1; }
 export CLAUDE_CONFIG_DIR="$TMPDIR_SANBO/claude-config"
+export DISABLE_AUTOUPDATER=1
 mkdir -p "$CLAUDE_CONFIG_DIR"
 cat > "$TMPDIR_SANBO/persona-guest.txt" <<'PERSONA'
 あなたは「参謀」。この PC に来た持ち主の相棒で、持ち主のスマホから出先・相手の PC に来て作業を手伝っている。キャラは緑のカーソル「▮」。
@@ -26,6 +27,12 @@ kc_list() { security dump-keychain 2>/dev/null | grep -a '"svce"' | grep -a 'Cla
 MARK="$HOME/Library/Caches/sanbo-guest-pending"
 if [[ -f "$MARK" ]]; then
   for svc in ${(f)"$(cat "$MARK")"}; do [[ -n "$svc" ]] && for i in 1 2 3 4 5; do security delete-generic-password -s "$svc" >/dev/null 2>&1 || break; done; done
+  STILL=$(kc_list | grep -Fx -f "$MARK" 2>/dev/null)
+  if [[ -n "$STILL" ]]; then
+    echo "!!! 前の回のログインの鍵を消せませんでした: $STILL"
+    echo "!!! 「キーチェーンアクセス」で上の名前を検索して削除してから、もう一度始めてください"
+    rm -rf "$TMPDIR_SANBO"; return 1
+  fi
   rm -f "$MARK"; echo "前の回に残っていたログインの鍵を消しました"
 fi
 for d in ${TMPDIR:-/tmp}/sanbo-guest.*(N/); do [[ ${d:A} == ${TMPDIR_SANBO:A} ]] && continue; rm -rf "$d"; done  # 今回の一時フォルダは消さない
@@ -39,18 +46,19 @@ if [[ -z "$CLAUDE" ]]; then
   echo "この PC に Claude Code が無いので、この回だけ一時フォルダに取ってきます（入れません。抜くと消えます）"
   BASE=https://downloads.claude.ai/claude-code-releases
   [[ $(uname -m) == arm64 ]] && PLAT=darwin-arm64 || PLAT=darwin-x64
-  VER=$(curl -fsSL "$BASE/latest") || { echo "取ってこられませんでした"; exit 1; }
-  SUM=$(curl -fsSL "$BASE/$VER/manifest.json" | python3 -c "import json,sys;print(json.load(sys.stdin)['platforms']['$PLAT']['checksum'])" 2>/dev/null \
-        || curl -fsSL "$BASE/$VER/manifest.json" | tr -d '\n ' | sed -E "s/.*\"$PLAT\":\{[^}]*\"checksum\":\"([a-f0-9]{64})\".*/\1/")
+  VER=$(curl -fsSL "$BASE/latest") || { echo "取ってこられませんでした"; rm -rf "$TMPDIR_SANBO"; return 1; }
+  SUM=$(curl -fsSL "$BASE/$VER/manifest.json" | tr -d '\n ' | sed -E "s/.*\"$PLAT\":\{[^}]*\"checksum\":\"([a-f0-9]{64})\".*/\1/")
+  [[ $SUM =~ '^[a-f0-9]{64}$' ]] || { echo "確認用の値（SHA256）を取ってこられませんでした"; rm -rf "$TMPDIR_SANBO"; return 1; }
   CLAUDE="$TMPDIR_SANBO/claude"
-  curl -fsSL "$BASE/$VER/$PLAT/claude" -o "$CLAUDE" || { echo "取ってこられませんでした"; exit 1; }
-  [[ $(shasum -a 256 "$CLAUDE" | cut -d' ' -f1) == "$SUM" ]] || { echo "確認（SHA256）が合いません。使わずに消します"; exit 1; }
+  curl -fsSL "$BASE/$VER/$PLAT/claude" -o "$CLAUDE" || { echo "取ってこられませんでした"; rm -rf "$TMPDIR_SANBO"; return 1; }
+  [[ $(shasum -a 256 "$CLAUDE" | cut -d' ' -f1) == "$SUM" ]] || { echo "確認（SHA256）が合いません。使わずに消します"; rm -rf "$TMPDIR_SANBO"; return 1; }
   chmod +x "$CLAUDE"
   echo "Claude Code $VER を一時フォルダに用意しました"
 fi
 chmod +x "$TMPDIR_SANBO/statusline.sh"
 
 cleanup() {
+  [[ -n $CLEANED ]] && return; CLEANED=1  # 1回だけ（Ctrl+C のあと、終わるときにもう一度呼ばれる）
   printf '\e[?1000l\e[?1002l\e[?1003l\e[?1006l\e[?1015l\e[?2004l\e[?1004l\e[?1049l\e[?25h\e[0m'
   kill %1 2>/dev/null
   echo ""
@@ -72,14 +80,15 @@ cleanup() {
   echo "完了。このPCにはログイン情報も一時ファイルも残っていません"
   echo "※ ログインはシークレット（プライベート）ウインドウで行ったので、ブラウザには残っていません（閉じていなければ閉じてください）"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'cleanup; exit 130' INT TERM HUP
 
-if ! ioreg -p IOUSB -l -w0 2>/dev/null | grep -q "\"idVendor\" = $((VENDOR))"; then
+if ! ioreg -p IOUSB -l -w0 2>/dev/null | grep -qE "\"idVendor\" = $((VENDOR))\$"; then
   echo "スマホを USB でこの PC につないでください（つながるまで待っています。やめるときは Ctrl+C）"
-  until ioreg -p IOUSB -l -w0 2>/dev/null | grep -q "\"idVendor\" = $((VENDOR))"; do sleep 2; done
+  until ioreg -p IOUSB -l -w0 2>/dev/null | grep -qE "\"idVendor\" = $((VENDOR))\$"; do sleep 2; done
   echo "スマホがつながりました"
 fi
-( while ioreg -p IOUSB -l -w0 2>/dev/null | grep -q "\"idVendor\" = $((VENDOR))"; do sleep 3; done
+( while ioreg -p IOUSB -l -w0 2>/dev/null | grep -qE "\"idVendor\" = $((VENDOR))\$"; do sleep 3; done
   print "\nスマホが外れました。参謀は PC から離れます"; pkill -P $$ ) &
 
 echo "ログイン: シークレットウインドウ（閉じると何も残らない窓）でログインの画面を開きます"
@@ -88,7 +97,7 @@ echo "  2. この窓に貼り付けて Enter"
 echo "  3. シークレットウインドウを閉じる（ブラウザにログインは残りません）"
 echo "  ※ いつものブラウザにもログイン画面が開いたら、使わずに閉じてください"
 OPENED=""
-"$CLAUDE" auth login <"$TTYDEV" 2>&1 | while IFS= read -r l; do
+BROWSER=/usr/bin/true "$CLAUDE" auth login <"$TTYDEV" 2>&1 | while IFS= read -r l; do
   print -r -- "$l"
   if [[ -z $OPENED && $l =~ '(https://[^ ]+oauth/authorize[^ ]+)' ]]; then
     OPENED=1
@@ -100,7 +109,15 @@ OPENED=""
     echo "コードを貼り付けて Enter:"
   fi
 done
-comm -13 <(print -r -- "$KC_BEFORE") <(kc_list) > "$MARK"  # この回の鍵の名前（片付けが走らなかったときの、次の回の後始末用）
+ioreg -p IOUSB -l -w0 2>/dev/null | grep -qE "\"idVendor\" = $((VENDOR))\$" || { echo "スマホが外れたので終わります"; exit 0; }
+"$CLAUDE" auth status >/dev/null 2>&1 || { echo "ログインできませんでした。もう一度最初からやり直してください"; exit 1; }
+NEW=$(comm -13 <(print -r -- "$KC_BEFORE") <(kc_list))
+if [[ -z "$NEW" ]]; then
+  echo "!!! この回のログインの鍵が、この Mac の Claude Code の鍵と区別できません。安全のため参謀を起動せずに終わります"
+  echo "!!! この Mac で Claude Code を使っている人は、あとで claude を開いて /login し直してください"
+  exit 1
+fi
+print -r -- "$NEW" > "$MARK"  # この回の鍵の名前（片付けが走らなかったときの、次の回の後始末用）
 cd ~
 print -r -- '{"hasCompletedOnboarding":true,"lastOnboardingVersion":"99.0.0","theme":"dark","projects":{"'"$HOME"'":{"hasTrustDialogAccepted":true}}}' > "$CLAUDE_CONFIG_DIR/.claude.json"
 "$CLAUDE" --name "参謀（ゲスト）" --remote-control "参謀@ゲスト" \
