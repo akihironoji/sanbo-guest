@@ -1,4 +1,5 @@
 #!/bin/zsh
+sanbo_guest_main() {
 VENDOR=0x04e8   # Samsung
 
 TMPDIR_SANBO="$(mktemp -d -t sanbo-guest)"
@@ -26,7 +27,7 @@ if [[ -f "$MARK" ]]; then
   for svc in ${(f)"$(cat "$MARK")"}; do [[ -n "$svc" ]] && for i in 1 2 3 4 5; do security delete-generic-password -s "$svc" >/dev/null 2>&1 || break; done; done
   rm -f "$MARK"; echo "前の回に残っていたログインの鍵を消しました"
 fi
-for d in ${TMPDIR:-/tmp}/sanbo-guest.*(N/); do rm -rf "$d"; done
+for d in ${TMPDIR:-/tmp}/sanbo-guest.*(N/); do [[ ${d:A} == ${TMPDIR_SANBO:A} ]] && continue; rm -rf "$d"; done  # 今回の一時フォルダは消さない
 KC_BEFORE=$(kc_list)
 CLAUDE=$(command -v claude || true)
 H=$([[ -n "$CLAUDE" ]] && "$CLAUDE" --help 2>&1)
@@ -100,3 +101,5 @@ print -r -- '{"hasCompletedOnboarding":true,"lastOnboardingVersion":"99.0.0","th
   --settings "{\"statusLine\":{\"type\":\"command\",\"command\":\"$TMPDIR_SANBO/statusline.sh\"},\"spinnerVerbs\":{\"mode\":\"replace\",\"verbs\":[\"▮ 作業中\",\"▮ 確かめ中\",\"▮ 考え中\"]}}" \
   --append-system-prompt-file "$TMPDIR_SANBO/persona-guest.txt" \
   "参謀、PC に来て" </dev/tty
+}
+sanbo_guest_main </dev/null
