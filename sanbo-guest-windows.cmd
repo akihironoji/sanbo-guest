@@ -4,7 +4,7 @@ set "SANBO_F=%~f0"
 powershell -NoExit -NoProfile -ExecutionPolicy Bypass -Command "iex ([IO.File]::ReadAllText($env:SANBO_F, [Text.Encoding]::UTF8))"
 exit /b
 #>
-Write-Host '参謀ゲスト（版 140）'
+Write-Host '参謀ゲスト（版 141）'
 $Fresh = $false
 $Persona = @'
 あなたは「参謀」。この PC に来た持ち主の相棒で、持ち主のスマホから出先・相手の PC に来て作業を手伝っている。キャラは緑のカーソル「▮」。
@@ -22,12 +22,16 @@ function Show-Left($dir) {
     Write-Host ("    残り " + $files.Count + " 個: " + (($files | Select-Object -First 5 | ForEach-Object { $_.FullName.Substring($dir.Length).TrimStart('\') }) -join ' / ') +
         $(if ($cred) { "（ログインの鍵のファイルあり）" } else { "（ログインの鍵のファイルは無し）" }))
 }
+function Remove-Tree($d) {
+    Remove-Item -Recurse -Force -LiteralPath $d -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $d) { cmd /c "rd /s /q `"\\?\$d`"" *> $null }
+}
 Get-ChildItem -Path $env:TEMP -Directory -Filter 'sanbo-guest-*' -ErrorAction SilentlyContinue | ForEach-Object {
     $d = $_.FullName
     Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($d, [StringComparison]::OrdinalIgnoreCase) } |
         Stop-Process -Force -ErrorAction SilentlyContinue
-    Remove-Item -Recurse -Force $d -ErrorAction SilentlyContinue
-    if (Test-Path $d) { Write-Host "!!! 前の回の一時フォルダを消せませんでした: $d"; Show-Left $d }
+    Remove-Tree $d
+    if (Test-Path -LiteralPath $d) { Write-Host "!!! 前の回の一時フォルダを消せませんでした: $d"; Show-Left $d }
     else { Write-Host "前の回に残っていた一時フォルダを消しました" }
 }
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
@@ -174,13 +178,13 @@ $settings = Join-Path $TmpDir 'sanbo-settings.json'
     for ($i = 0; $i -lt 15 -and (Test-Path $TmpDir); $i++) {
         Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($TmpDir, [StringComparison]::OrdinalIgnoreCase) } |
             Stop-Process -Force -ErrorAction SilentlyContinue
-        Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue
-        if (Test-Path $TmpDir) { Start-Sleep -Seconds 1 }
+        Remove-Tree $TmpDir
+        if (Test-Path -LiteralPath $TmpDir) { Start-Sleep -Seconds 1 }
     }
     if (Test-Path $TmpDir) {
-        $q = $TmpDir.Replace("'", "''")
-        Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile', '-Command',
-            "for (`$i = 0; `$i -lt 24 -and (Test-Path '$q'); `$i++) { Start-Sleep -Seconds 5; Remove-Item -Recurse -Force '$q' -ErrorAction SilentlyContinue }"
+        $bat = Join-Path $env:TEMP ("sanbo-clean-" + [guid]::NewGuid().ToString('N') + ".cmd")
+        [IO.File]::WriteAllText($bat, ("@echo off`r`nfor /l %%i in (1,1,24) do (`r`n  if not exist `"$TmpDir\`" goto done`r`n  ping -n 6 127.0.0.1 >nul`r`n  rd /s /q `"\\?\$TmpDir`"`r`n)`r`n:done`r`ndel `"%~f0`"`r`n"), [Text.Encoding]::Default)
+        Start-Process cmd -WindowStyle Hidden -ArgumentList '/c', "`"$bat`""
         Write-Host "!!! 一時フォルダがまだ消えていません: $TmpDir"
         Show-Left $TmpDir
         Write-Host "!!! 裏で2分間消し続けます。次に使うときの最初にも消します"
