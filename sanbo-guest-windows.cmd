@@ -4,7 +4,7 @@ set "SANBO_F=%~f0"
 powershell -NoExit -NoProfile -ExecutionPolicy Bypass -Command "iex ([IO.File]::ReadAllText($env:SANBO_F, [Text.Encoding]::UTF8))"
 exit /b
 #>
-Write-Host '参謀ゲスト（版 129）'
+Write-Host '参謀ゲスト（版 134）'
 $Fresh = $false
 $Persona = @'
 あなたは「参謀」。この PC に来た持ち主の相棒で、持ち主のスマホから出先・相手の PC に来て作業を手伝っている。キャラは緑のカーソル「▮」。
@@ -36,7 +36,7 @@ public static class SanboClose {
     public static void Arm(string d) { dir = d; keep = On; SetConsoleCtrlHandler(keep, true); }
     static bool On(int t) {
         if (t != 2 && t != 5 && t != 6) return false;
-        try { foreach (var p in System.Diagnostics.Process.GetProcessesByName("claude")) { try { if (p.MainModule.FileName.StartsWith(dir, StringComparison.OrdinalIgnoreCase)) p.Kill(); } catch { } } } catch { }
+        try { foreach (var n in new[] { "claude", "scrcpy", "adb" }) foreach (var p in System.Diagnostics.Process.GetProcessesByName(n)) { try { if (p.MainModule.FileName.StartsWith(dir, StringComparison.OrdinalIgnoreCase)) p.Kill(); } catch { } } } catch { }
         for (int i = 0; i < 6; i++) { try { if (Directory.Exists(dir)) Directory.Delete(dir, true); break; } catch { System.Threading.Thread.Sleep(300); } }
         return false;
     }
@@ -117,6 +117,29 @@ $watch = Start-Job -InitializationScript ([scriptblock]::Create("function Get-Ph
     if ((Get-PhoneCount) -lt $PhoneN) { Write-Host "スマホが外れたので終わります"; return }
     & $Claude auth status *> $null
     if ($LASTEXITCODE -ne 0) { Write-Host "ログインできませんでした。もう一度最初からやり直してください"; return }
+    try {
+        $sv = 'v5.0.1'
+        if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { $sp = 'winarm64'; $ss = '16c3fc2068df64946f670e3504b4752073ebae47a416a45b46e79a5ab19c689b' }
+        else { $sp = 'win64'; $ss = 'b12a2c4ee8be317422451fc7dcf8ee20a71b5ea7ef9ad73ddd825a25316227a5' }
+        $env:ANDROID_USER_HOME = Join-Path $TmpDir 'android'
+        New-Item -ItemType Directory -Force -Path $env:ANDROID_USER_HOME | Out-Null
+        $zip = Join-Path $TmpDir 'scrcpy.zip'
+        $ProgressPreference = 'SilentlyContinue'
+        Invoke-WebRequest "https://github.com/Genymobile/scrcpy/releases/download/$sv/scrcpy-$sp-$sv.zip" -OutFile $zip
+        if ((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() -ne $ss) { throw '確認（SHA256）が合わない' }
+        Expand-Archive $zip -DestinationPath $TmpDir -Force; Remove-Item $zip -Force
+        $script:ScrDir = Join-Path $TmpDir "scrcpy-$sp-$sv"
+        $runner = Join-Path $TmpDir 'phone-screen.ps1'
+        $q = $script:ScrDir.Replace("'", "''")
+        [IO.File]::WriteAllText($runner, @"
+`$adb = '$q\adb.exe'
+for (`$i = 0; `$i -lt 90; `$i++) { if ((& `$adb get-state 2>`$null) -eq 'device') { break }; Start-Sleep -Seconds 2 }
+if ((& `$adb get-state 2>`$null) -eq 'device') { & '$q\scrcpy.exe' --keyboard=uhid --no-audio --max-size 1400 --window-title 'スマホ（英数で打つ）' *> `$null }
+"@, (New-Object Text.UTF8Encoding $true))
+        $script:ScrProc = Start-Process powershell -WindowStyle Hidden -PassThru -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runner
+        Write-Host "スマホの画面をこの PC に出します。スマホに「USB デバッグを許可しますか」が出たら「許可」（「常に許可」には印を付けない）"
+        Write-Host "  打つときは、この PC の入力を「英数」（半角）にしてください（日本語入力だと PC が文字を横取りします。日本語はスマホ側で切り替え）"
+    } catch { Write-Host "スマホの画面は出せませんでした（参謀はそのまま使えます）: $_" }
     Set-Location $HOME
 $settings = Join-Path $TmpDir 'sanbo-settings.json'
 [IO.File]::WriteAllText($settings, '{"spinnerVerbs":{"mode":"replace","verbs":["▮ 作業中","▮ 確かめ中","▮ 考え中"]}}', (New-Object Text.UTF8Encoding $false))
@@ -131,6 +154,12 @@ $settings = Join-Path $TmpDir 'sanbo-settings.json'
     Write-Host ""
     Write-Host "片付け中: この PC に置いた一時ファイルを削除します"
     if ($Claude) { & $Claude auth logout *> $null; Write-Host "ログアウトしました" }
+    if ($script:ScrDir) {
+        if ($script:ScrProc) { taskkill /PID $script:ScrProc.Id /T /F *> $null }
+        & (Join-Path $script:ScrDir 'adb.exe') kill-server *> $null
+        Get-Process scrcpy, adb -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($script:ScrDir, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
+        Write-Host "スマホの画面を閉じました"
+    }
     Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue
     if (Test-Path $TmpDir) { Start-Sleep -Seconds 2; Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue }
     if (Test-Path $TmpDir) { Write-Host "!!! 一時フォルダが消し切れていません: $TmpDir （手で消してください）" }

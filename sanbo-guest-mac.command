@@ -57,6 +57,24 @@ if [[ -z "$CLAUDE" ]]; then
 fi
 chmod +x "$TMPDIR_SANBO/statusline.sh"
 
+SCR_DIR=""
+phone_screen() {
+  local sv=v5.0.1 sp ss f
+  if [[ $(uname -m) == arm64 ]]; then sp=macos-aarch64 ss=33611e51977a8289e2e124b220f727895181ef2eb9060e0987a4dc2db9cf0d6b
+  else sp=macos-x86_64 ss=31a5467a9e907f162b093267cbbab1276b15c6e709c2ea8159566a8d165beb50; fi
+  export ANDROID_USER_HOME="$TMPDIR_SANBO/android"; mkdir -p "$ANDROID_USER_HOME"
+  f="$TMPDIR_SANBO/scrcpy.tar.gz"
+  curl -fsSL "https://github.com/Genymobile/scrcpy/releases/download/$sv/scrcpy-$sp-$sv.tar.gz" -o "$f" || { echo "スマホの画面: 道具を取ってこられませんでした（参謀はそのまま使えます）"; return; }
+  [[ $(shasum -a 256 "$f" | cut -d' ' -f1) == "$ss" ]] || { echo "スマホの画面: 確認（SHA256）が合わないので使いません"; rm -f "$f"; return; }
+  tar -xzf "$f" -C "$TMPDIR_SANBO" && rm -f "$f"
+  SCR_DIR="$TMPDIR_SANBO/scrcpy-$sp-$sv"
+  echo "スマホの画面をこの PC に出します。スマホに「USB デバッグを許可しますか」が出たら「許可」（「常に許可」には印を付けない）"
+  echo "  打つときは、この PC の入力を「英数」にしてください（日本語入力だと PC が文字を横取りします。日本語はスマホ側で切り替え）"
+  ( for i in {1..90}; do [[ $("$SCR_DIR/adb" get-state 2>/dev/null) == device ]] && break; sleep 2; done
+    [[ $("$SCR_DIR/adb" get-state 2>/dev/null) == device ]] || exit
+    ADB="$SCR_DIR/adb" SCRCPY_SERVER_PATH="$SCR_DIR/scrcpy-server" "$SCR_DIR/scrcpy" --keyboard=uhid --no-audio --max-size 1400 --window-title "スマホ（英数で打つ）" >/dev/null 2>&1 ) &
+  SCR_PID=$!
+}
 cleanup() {
   [[ -n $CLEANED ]] && return; CLEANED=1  # 1回だけ（Ctrl+C のあと、終わるときにもう一度呼ばれる）
   printf '\e[?1000l\e[?1002l\e[?1003l\e[?1006l\e[?1015l\e[?2004l\e[?1004l\e[?1049l\e[?25h\e[0m'
@@ -74,6 +92,12 @@ cleanup() {
     echo "!!! 「キーチェーンアクセス」で上の名前を検索して削除してください"
   else
     echo "キーチェーンに、この回のログインの鍵は残っていません"
+  fi
+  if [[ -n $SCR_DIR ]]; then
+    [[ -n $SCR_PID ]] && kill $SCR_PID 2>/dev/null   # 許可を待っている処理を先に止める（待ちが adb を起こし直さないように）
+    ANDROID_USER_HOME="$TMPDIR_SANBO/android" "$SCR_DIR/adb" kill-server >/dev/null 2>&1
+    pkill -f "$SCR_DIR/" 2>/dev/null   # scrcpy・待ちの処理・adb の残り（一時フォルダの道具で動いているものだけ）
+    echo "スマホの画面を閉じました"
   fi
   rm -rf "$TMPDIR_SANBO"
   [[ -z "$LEFT" ]] && rm -f "$MARK"
@@ -131,6 +155,7 @@ if [[ -z "$NEW" ]]; then
   exit 1
 fi
 print -r -- "$NEW" > "$MARK"  # この回の鍵の名前（片付けが走らなかったときの、次の回の後始末用）
+phone_screen
 cd ~
 print -r -- '{"hasCompletedOnboarding":true,"lastOnboardingVersion":"99.0.0","theme":"dark","projects":{"'"$HOME"'":{"hasTrustDialogAccepted":true}}}' > "$CLAUDE_CONFIG_DIR/.claude.json"
 "$CLAUDE" --name "参謀（ゲスト）" --remote-control "参謀@ゲスト" \
