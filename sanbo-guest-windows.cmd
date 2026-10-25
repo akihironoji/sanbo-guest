@@ -4,7 +4,7 @@ set "SANBO_F=%~f0"
 powershell -NoExit -NoProfile -ExecutionPolicy Bypass -Command "iex ([IO.File]::ReadAllText($env:SANBO_F, [Text.Encoding]::UTF8))"
 exit /b
 #>
-Write-Host '参謀ゲスト（版 138）'
+Write-Host '参謀ゲスト（版 139）'
 $Fresh = $false
 $Persona = @'
 あなたは「参謀」。この PC に来た持ち主の相棒で、持ち主のスマホから出先・相手の PC に来て作業を手伝っている。キャラは緑のカーソル「▮」。
@@ -20,6 +20,7 @@ Get-ChildItem -Path $env:TEMP -Directory -Filter 'sanbo-guest-*' -ErrorAction Si
     Remove-Item -Recurse -Force $_.FullName -ErrorAction SilentlyContinue
     Write-Host "前の回に残っていた一時フォルダ（ログインの鍵を含む）を消しました"
 }
+try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 $TmpDir = Join-Path $env:TEMP ("sanbo-guest-" + [guid]::NewGuid().ToString('N'))
 $env:CLAUDE_CONFIG_DIR = Join-Path $TmpDir 'claude-config'
 New-Item -ItemType Directory -Force -Path $env:CLAUDE_CONFIG_DIR | Out-Null
@@ -160,9 +161,21 @@ $settings = Join-Path $TmpDir 'sanbo-settings.json'
         Get-Process scrcpy, adb -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($script:ScrDir, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
         Write-Host "スマホの画面を閉じました"
     }
-    Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue
-    if (Test-Path $TmpDir) { Start-Sleep -Seconds 2; Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue }
-    if (Test-Path $TmpDir) { Write-Host "!!! 一時フォルダが消し切れていません: $TmpDir （手で消してください）" }
-    Write-Host "完了。この PC にはログイン情報も一時ファイルも残っていません"
+    for ($i = 0; $i -lt 15 -and (Test-Path $TmpDir); $i++) {
+        Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($TmpDir, [StringComparison]::OrdinalIgnoreCase) } |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+        Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue
+        if (Test-Path $TmpDir) { Start-Sleep -Seconds 1 }
+    }
+    if (Test-Path $TmpDir) {
+        $q = $TmpDir.Replace("'", "''")
+        Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile', '-Command',
+            "for (`$i = 0; `$i -lt 24 -and (Test-Path '$q'); `$i++) { Start-Sleep -Seconds 5; Remove-Item -Recurse -Force '$q' -ErrorAction SilentlyContinue }"
+        $cred = @(Get-ChildItem -Recurse -Force $TmpDir -Filter '.credentials.json' -ErrorAction SilentlyContinue).Count
+        Write-Host "!!! 一時フォルダがまだ消えていません: $TmpDir"
+        Write-Host ("!!! " + $(if ($cred) { "ログインの鍵のファイルが残っています。" } else { "ログインの鍵のファイルは消えています（残りは道具など）。" }) + "裏で2分間消し続けます。次に使うときの最初にも消します")
+    } else {
+        Write-Host "完了。この PC にはログイン情報も一時ファイルも残っていません"
+    }
     Write-Host "※ ログインは InPrivate の窓で行ったので、ブラウザには残っていません（InPrivate の窓を閉じていなければ閉じてください）"
 }
