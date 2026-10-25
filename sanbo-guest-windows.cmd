@@ -4,7 +4,7 @@ set "SANBO_F=%~f0"
 powershell -NoExit -NoProfile -ExecutionPolicy Bypass -Command "iex ([IO.File]::ReadAllText($env:SANBO_F, [Text.Encoding]::UTF8))"
 exit /b
 #>
-Write-Host '参謀ゲスト（版 139）'
+Write-Host '参謀ゲスト（版 140）'
 $Fresh = $false
 $Persona = @'
 あなたは「参謀」。この PC に来た持ち主の相棒で、持ち主のスマホから出先・相手の PC に来て作業を手伝っている。キャラは緑のカーソル「▮」。
@@ -16,9 +16,19 @@ $Persona = @'
 - この PC の持ち主のファイルは、頼まれた範囲だけ触る。この PC の中身を外へ送らない
 - スマホを抜くと、この会話もログイン情報も消える
 '@
+function Show-Left($dir) {
+    $files = @(Get-ChildItem -Recurse -Force -File $dir -ErrorAction SilentlyContinue)
+    $cred = @($files | Where-Object { $_.Name -eq '.credentials.json' }).Count
+    Write-Host ("    残り " + $files.Count + " 個: " + (($files | Select-Object -First 5 | ForEach-Object { $_.FullName.Substring($dir.Length).TrimStart('\') }) -join ' / ') +
+        $(if ($cred) { "（ログインの鍵のファイルあり）" } else { "（ログインの鍵のファイルは無し）" }))
+}
 Get-ChildItem -Path $env:TEMP -Directory -Filter 'sanbo-guest-*' -ErrorAction SilentlyContinue | ForEach-Object {
-    Remove-Item -Recurse -Force $_.FullName -ErrorAction SilentlyContinue
-    Write-Host "前の回に残っていた一時フォルダ（ログインの鍵を含む）を消しました"
+    $d = $_.FullName
+    Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($d, [StringComparison]::OrdinalIgnoreCase) } |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Force $d -ErrorAction SilentlyContinue
+    if (Test-Path $d) { Write-Host "!!! 前の回の一時フォルダを消せませんでした: $d"; Show-Left $d }
+    else { Write-Host "前の回に残っていた一時フォルダを消しました" }
 }
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 $TmpDir = Join-Path $env:TEMP ("sanbo-guest-" + [guid]::NewGuid().ToString('N'))
@@ -171,9 +181,9 @@ $settings = Join-Path $TmpDir 'sanbo-settings.json'
         $q = $TmpDir.Replace("'", "''")
         Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile', '-Command',
             "for (`$i = 0; `$i -lt 24 -and (Test-Path '$q'); `$i++) { Start-Sleep -Seconds 5; Remove-Item -Recurse -Force '$q' -ErrorAction SilentlyContinue }"
-        $cred = @(Get-ChildItem -Recurse -Force $TmpDir -Filter '.credentials.json' -ErrorAction SilentlyContinue).Count
         Write-Host "!!! 一時フォルダがまだ消えていません: $TmpDir"
-        Write-Host ("!!! " + $(if ($cred) { "ログインの鍵のファイルが残っています。" } else { "ログインの鍵のファイルは消えています（残りは道具など）。" }) + "裏で2分間消し続けます。次に使うときの最初にも消します")
+        Show-Left $TmpDir
+        Write-Host "!!! 裏で2分間消し続けます。次に使うときの最初にも消します"
     } else {
         Write-Host "完了。この PC にはログイン情報も一時ファイルも残っていません"
     }
