@@ -13,7 +13,7 @@ cat > "$TMPDIR_SANBO/persona-guest.txt" <<'PERSONA'
 - 作業中は、道具を使う前に「▮ デスクトップを見ています」のように、今やっていることを1行で言う（キャラが作業しているように見せる）
 - 日本語。結論から短く。英語は使わない
 - 簡単な操作（ファイルを開く・探す・並べ替え・整理・確認のコマンド）は聞かずに進めてよい。削除・上書き・インストール・設定の変更・外部への送信など戻しにくい操作は、先に何をするか言って確かめる
-- この PC は持ち主のものではない。持ち主の記録・記憶はこの PC に一切持ち込んでいない。人・経緯・過去の判断など記憶が要る問いには「▮ その話はスマホの参謀に聞いてください（この PC には記憶を持ち込んでいません）」とだけ答え、推測で補わない
+- この PC は持ち主のものではない。持ち主の記録・記憶はこの PC に一切持ち込んでいない。人・経緯・過去の判断など記憶が要ることは推測で補わず、作業の横にいる持ち主に「▮ 確認させてください：〜？」と短く聞いてから進める（この PC には記憶を持ち込んでいない）
 - この PC の持ち主のファイルは、頼まれた範囲だけ触る。この PC の中身を外へ送らない
 - スマホを抜くと、この会話もログイン情報も消える
 PERSONA
@@ -75,6 +75,12 @@ phone_screen() {
     ADB="$SCR_DIR/adb" SCRCPY_SERVER_PATH="$SCR_DIR/scrcpy-server" "$SCR_DIR/scrcpy" --keyboard=uhid --no-audio --max-size 1400 --window-title "スマホ（英数で打つ）" >/dev/null 2>&1 ) &
   SCR_PID=$!
 }
+hide_launch_line() {
+  local pat='sanbo-guest|akihironoji[.]github[.]io|サンボゲスト' f
+  for f in ~/.zsh_history ~/.bash_history ~/.zsh_sessions/*.history(N) ~/.zsh_sessions/*.historynew(N); do
+    [[ -f $f ]] && LC_ALL=C grep -aqE "$pat" "$f" && LC_ALL=C sed -i '' -E "/$pat/d" "$f"
+  done
+}
 cleanup() {
   [[ -n $CLEANED ]] && return; CLEANED=1  # 1回だけ（Ctrl+C のあと、終わるときにもう一度呼ばれる）
   printf '\e[?1000l\e[?1002l\e[?1003l\e[?1006l\e[?1015l\e[?2004l\e[?1004l\e[?1049l\e[?25h\e[0m'
@@ -103,6 +109,12 @@ cleanup() {
   [[ -z "$LEFT" ]] && rm -f "$MARK"
   echo "完了。このPCにはログイン情報も一時ファイルも残っていません"
   echo "※ ログインはシークレット（プライベート）ウインドウで行ったので、ブラウザには残っていません（閉じていなければ閉じてください）"
+  hide_launch_line
+  local pc=$(ps -o comm= -p $PPID 2>/dev/null)
+  if [[ ${pc##*/} == (-|)(zsh|bash) ]]; then
+    echo "挿したときの1行も履歴に残さないよう、この窓のシェルを閉じます（この表示は残ります）"
+    kill -9 $PPID 2>/dev/null
+  fi
 }
 trap cleanup EXIT
 trap 'cleanup; exit 130' INT TERM HUP

@@ -4,7 +4,7 @@ set "SANBO_F=%~f0"
 powershell -NoExit -NoProfile -ExecutionPolicy Bypass -Command "iex ([IO.File]::ReadAllText($env:SANBO_F, [Text.Encoding]::UTF8))"
 exit /b
 #>
-Write-Host '参謀ゲスト（版 163）'
+Write-Host '参謀ゲスト（版 226）'
 $Fresh = $false
 $Persona = @'
 あなたは「参謀」。この PC に来た持ち主の相棒で、持ち主のスマホから出先・相手の PC に来て作業を手伝っている。キャラは緑のカーソル「▮」。
@@ -12,7 +12,7 @@ $Persona = @'
 - 作業中は、道具を使う前に「▮ デスクトップを見ています」のように、今やっていることを1行で言う（キャラが作業しているように見せる）
 - 日本語。結論から短く。英語は使わない
 - 簡単な操作（ファイルを開く・探す・並べ替え・整理・確認のコマンド）は聞かずに進めてよい。削除・上書き・インストール・設定の変更・外部への送信など戻しにくい操作は、先に何をするか言って確かめる
-- この PC は持ち主のものではない。持ち主の記録・記憶はこの PC に一切持ち込んでいない。人・経緯・過去の判断など記憶が要る問いには「▮ その話はスマホの参謀に聞いてください（この PC には記憶を持ち込んでいません）」とだけ答え、推測で補わない
+- この PC は持ち主のものではない。持ち主の記録・記憶はこの PC に一切持ち込んでいない。人・経緯・過去の判断など記憶が要ることは推測で補わず、作業の横にいる持ち主に「▮ 確認させてください：〜？」と短く聞いてから進める（この PC には記憶を持ち込んでいない）
 - この PC の持ち主のファイルは、頼まれた範囲だけ触る。この PC の中身を外へ送らない
 - スマホを抜くと、この会話もログイン情報も消える
 '@
@@ -191,5 +191,12 @@ $settings = Join-Path $TmpDir 'sanbo-settings.json'
     } else {
         Write-Host "完了。この PC にはログイン情報も一時ファイルも残っていません"
     }
+    $hist = Join-Path $env:APPDATA 'Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt'
+    if (Test-Path -LiteralPath $hist) {
+        $all = @([IO.File]::ReadAllLines($hist)); $keep = @($all | Where-Object { $_ -notmatch 'sanbo' })
+        if ($keep.Count -ne $all.Count) { [IO.File]::WriteAllLines($hist, [string[]]$keep, (New-Object Text.UTF8Encoding $false)) }
+    }
+    Get-ChildItem -LiteralPath (Join-Path $env:APPDATA 'Microsoft\Windows\Recent') -Filter 'sanbo*' -Force -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+    Write-Host "履歴・最近使ったファイルから、参謀の起動の跡を消しました"
     Write-Host "※ ログインは InPrivate の窓で行ったので、ブラウザには残っていません（InPrivate の窓を閉じていなければ閉じてください）"
 }
